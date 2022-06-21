@@ -1,0 +1,204 @@
+#include "stdafx.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <Windows.h>   
+
+
+#include "Csv.h"
+
+static char* s_Buffer;
+static char* s_BufferPointer;
+
+void Eliminate(char* str, char ch)
+{
+    int len = strlen(str) + 1;
+    for (; *str != '\0'; str++, len--)//종료 문자를 만날 때까지 반복
+    {
+        if (*str == ch)//ch와 같은 문자일 때
+        {
+            strcpy_s(str, len, str + 1);
+            str--;
+        }
+    }
+}
+
+
+void readFileToBuffer(const char* filename)
+{
+    FILE* fp;
+    if (0 != fopen_s(&fp, filename, "r"))
+    {
+        return;
+    }
+    //
+    fseek(fp, 0, SEEK_END);
+    long fileSize = ftell(fp);
+
+    s_Buffer = malloc(sizeof(char) * (fileSize + 1));
+    memset(s_Buffer, 0, sizeof(char) * (fileSize + 1));
+
+    fseek(fp, 0, SEEK_SET);
+    fread(s_Buffer, fileSize, 1, fp);
+
+    fclose(fp);
+}
+
+
+int countCategory(const char* firstLine)
+{
+    int result = 1;
+    while (*firstLine != '\n')
+    {
+        if (*firstLine == '@')
+        {
+            ++result;
+
+        }
+
+        ++firstLine;
+    }
+
+    return result;
+}
+
+void CreateCsvFile(CsvFile* csvFile, const char* filename)
+{
+    readFileToBuffer(filename);
+
+    //칼럼수
+    csvFile->ColumnCount = countCategory(s_Buffer);
+    for (int i = 0; i < MAXIMUM_ROW; ++i)
+    {
+        csvFile->Items[i] = (CsvItem*)malloc(sizeof(CsvItem) * csvFile->ColumnCount);
+    }
+
+    //
+    s_BufferPointer = s_Buffer;
+    while (*s_BufferPointer != '\0')
+    {
+        int row = csvFile->RowCount;
+
+        // 한 줄을 읽어들인다.
+        int commaCount = 0;
+        int quotesCount = 0;
+        const char* lineStart = s_BufferPointer;
+        const char* lineEnd = lineStart;
+        while (true)
+        {
+            if (csvFile->ColumnCount - 1 == commaCount && '\n' == *lineEnd)
+            {
+                break;
+            }
+
+            if (*lineEnd == '@')
+            {
+                ++commaCount;
+            }
+
+            ++lineEnd;
+        }
+
+        // 콤마 분류
+        const char* recordStart = lineStart;
+        const char* recordEnd = recordStart;
+        for (int i = 0; i < csvFile->ColumnCount; ++i)
+        {
+            while (*recordEnd != '@' && recordEnd != lineEnd)//null이 아닐때임
+            {
+                ++recordEnd;
+            }
+
+            int size = recordEnd - recordStart;
+            csvFile->Items[row][i].RawData = (char*)malloc(sizeof(char) * (size + 1));
+            //레코드 사이즈 별로 데이터 담기
+            memcpy(csvFile->Items[row][i].RawData, recordStart, size); //여기서 예외 오류 발생
+            csvFile->Items[row][i].RawData[size] = '\0';
+
+            recordStart = recordEnd + 1;
+            recordEnd = recordStart;
+        }
+
+        ++csvFile->RowCount;
+
+        s_BufferPointer = lineEnd + 1;
+    }
+
+}
+
+void FreeCsvFile(CsvFile* csvFile)
+{
+    for (int r = 0; r < MAXIMUM_ROW; ++r)
+    {
+        if (r < csvFile->RowCount)
+        {
+            for (int c = 0; c < csvFile->ColumnCount; ++c)
+            {
+                free(csvFile->Items[r][c].RawData);
+                //csvFile->Items[r][c].RawData = NULL;
+            }
+        }
+
+        free(csvFile->Items[r]);
+        csvFile->Items[r] = NULL;
+    }
+}
+
+
+int ParseToInt(const CsvItem item)
+{
+    char* end;
+    return strtol(item.RawData, &end, 10);
+}
+
+char* ParseToAscii(const CsvItem item)
+{
+    int size = strlen(item.RawData);
+    char* result = malloc(size + 1);
+    memset(result, 0, size + 1);
+
+
+    char test[2000] = { 0 };
+    strcpy_s(test, sizeof(test), item.RawData);
+
+    int boolcount = 0;
+
+    for (int i = 0; i < sizeof(test); i++)
+    {
+        if (test[i] == '\"') {
+            boolcount += 1;
+        }
+        if (boolcount != 0) {
+            if (test[i - 1] == '\"' && test[i] == '\"') {
+                test[i] = '#';
+            }
+            else if (test[i - 1] == '#' && test[i] == '\"') {
+                test[i] = '\"';
+            }
+        }
+    }
+
+    //시작 시점과 끝지점에 "가 있으면 삭제
+    //시작 지점과 끝지점을 #추가
+    int size2 = strlen(test);
+    if (test[0] == '\"' && test[size2 - 1] == '\"') {
+        test[0] = '#';
+        test[size2 - 1] = '#';
+    }
+
+    Eliminate(test, '#');
+    result = test;
+
+    return result;
+}
+
+wchar_t* ParseToUnicode(char* str)
+{
+
+    int size = MultiByteToWideChar(CP_ACP, NULL, str, -1, NULL, NULL);
+    wchar_t* result = (wchar_t*)malloc(sizeof(wchar_t) * (size + 1));
+    MultiByteToWideChar(CP_ACP, NULL, str, -1, result, size);
+
+    return result;
+}
